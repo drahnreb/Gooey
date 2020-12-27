@@ -3,6 +3,7 @@ Primary orchestration and control point for Gooey.
 """
 
 import sys
+import platform
 
 import wx
 from wx.adv import TaskBarIcon
@@ -26,6 +27,52 @@ from gooey.gui.util import wx_util
 from gooey.gui.util.wx_util import transactUI
 from gooey.python_bindings import constants
 
+class GooeyTaskBarIcon(TaskBarIcon):
+    TBMENU_RESTORE = wx.NewIdRef()
+    TBMENU_HIDE   = wx.NewIdRef()
+    TBMENU_CLOSE   = wx.NewIdRef()
+    
+    def __init__(self, frame):
+        super(TaskBarIcon, self).__init__(iconType=wx.adv.TBI_DOCK)
+        self.frame = frame
+
+        # Set the image
+        icon = wx.Icon(self.frame.buildSpec['images']['programIcon'], wx.BITMAP_TYPE_PNG)
+        self.SetIcon(icon)
+        self.imgidx = 1
+        
+        # bind some events
+        self.Bind(wx.adv.EVT_TASKBAR_LEFT_DCLICK, self.OnTaskBarActivate)
+        self.Bind(wx.EVT_MENU, self.OnTaskBarActivate, id=self.TBMENU_RESTORE)
+        self.Bind(wx.EVT_MENU, self.OnTaskBarClose, id=self.TBMENU_CLOSE)
+
+    def CreatePopupMenu(self):
+        """
+        This method is called by the base class when it needs to popup
+        the menu for the default EVT_RIGHT_DOWN event.  Just create
+        the menu how you want it and return it from this function,
+        the base class takes care of the rest.
+        """
+        _iconized = self.frame.IsIconized()
+        _shown = self.frame.IsShown()
+        menu = wx.Menu()
+        menu.Append(self.TBMENU_RESTORE, f"{'Hide' if (_shown or not _iconized) else 'Show'} {self.frame.buildSpec['program_name']}")
+        menu.Append(self.TBMENU_CLOSE,   f"Exit {self.frame.buildSpec['program_name']}")
+        return menu
+
+    def OnTaskBarActivate(self, evt):
+        _iconized = self.frame.IsIconized()
+        _shown = self.frame.IsShown()
+        self.frame.Show(not _shown)
+        if platform.system().lower().startswith("win"):
+            # minimizes only for windows
+            self.frame.Iconize(not _iconized)
+        if self.frame.IsShown():
+            self.frame.Raise()
+
+    def OnTaskBarClose(self, evt):
+        wx.CallAfter(self.frame.onClose)
+
 
 class GooeyApplication(wx.Frame):
     """
@@ -46,6 +93,8 @@ class GooeyApplication(wx.Frame):
         self.footer = Footer(self, buildSpec)
         self.console = Console(self, buildSpec)
         self.layoutComponent()
+        if self.buildSpec.get('taskbar', True):
+            self.taskbarIcon = GooeyTaskBarIcon(self)
         self.timer = Timing(self)
 
         self.clientRunner = ProcessController(
@@ -171,7 +220,8 @@ class GooeyApplication(wx.Frame):
                 self.clientRunner.stop()
                 self.destroyGooey()
         else:
-            self.destroyGooey()
+            if self.shouldStopExecution():
+                self.destroyGooey()
 
 
     def shouldStopExecution(self):
@@ -179,6 +229,8 @@ class GooeyApplication(wx.Frame):
 
 
     def destroyGooey(self):
+        if self.buildSpec.get('taskbar', True):
+            self.taskbarIcon.Destroy()
         self.Destroy()
         sys.exit()
 
@@ -220,7 +272,6 @@ class GooeyApplication(wx.Frame):
             # as instance data (self.). Otherwise, it will not render correctly.
             self.taskbarIcon = TaskBarIcon(iconType=wx.adv.TBI_DOCK)
             self.taskbarIcon.SetIcon(icon)
-
 
 
     def buildNavigation(self):
